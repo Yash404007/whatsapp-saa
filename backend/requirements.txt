@@ -1,1 +1,16 @@
  
+fastapi
+uvicorn
+sqlalchemy
+asyncpg
+psycopg2-binary
+alembic
+python-dotenv
+groq
+httpx
+python-jose[cryptography]
+passlib[bcrypt]
+google-api-python-client
+google-auth
+pyngrok
+loguru
