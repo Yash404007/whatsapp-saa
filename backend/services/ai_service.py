@@ -5,8 +5,6 @@ from groq import Groq
 
 
 def generate_system_prompt(client_data: dict) -> str:
-    """Use Groq to auto-generate a custom system prompt for the client's bot."""
-    
     groq_api_key = client_data.get("groq_api_key")
     if not groq_api_key:
         raise ValueError("Groq API key is required")
@@ -58,11 +56,12 @@ async def get_ai_reply(
     groq_api_key: str,
     extra_context: str = ""
 ) -> str:
-    """Get AI reply for a user message."""
     try:
         client = AsyncGroq(api_key=groq_api_key)
 
         full_system = system_prompt
+        full_system += "\n\nSTRICT WHATSAPP RULES:\n- Maximum 2 sentences per reply\n- Never list multiple things at once\n- Ask ONE question at a time\n- No bullet points or numbered lists\n- Keep it conversational and short"
+
         if extra_context:
             full_system += f"\n\nCONTEXT FOR THIS RESPONSE:\n{extra_context}"
 
@@ -75,12 +74,12 @@ async def get_ai_reply(
         result = await client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=messages,
-            max_tokens=300,
+            max_tokens=150,
             temperature=0.7,
         )
         return result.choices[0].message.content.strip()
     except Exception as e:
-        return f"I'm having a technical issue. Please try again shortly."
+        return "I'm having a technical issue. Please try again shortly."
 
 
 async def extract_fields(
@@ -88,7 +87,6 @@ async def extract_fields(
     fields: list,
     groq_api_key: str
 ) -> dict:
-    """Extract specific fields from user message."""
     try:
         from datetime import date
         today = date.today().isoformat()

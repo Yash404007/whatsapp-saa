@@ -35,6 +35,30 @@ class ClientCreate(BaseModel):
     dashboard_password: Optional[str] = None
 
 
+class ClientUpdate(BaseModel):
+    wa_phone_id: Optional[str] = None
+    wa_access_token: Optional[str] = None
+    wa_verify_token: Optional[str] = None
+    groq_api_key: Optional[str] = None
+    is_active: Optional[bool] = None
+    working_hours: Optional[str] = None
+    contact_phone: Optional[str] = None
+    contact_email: Optional[str] = None
+    address: Optional[str] = None
+    bot_name: Optional[str] = None
+    bot_tone: Optional[str] = None
+    description: Optional[str] = None
+    collect_fields: Optional[List[str]] = None
+    gmail_sender: Optional[str] = None
+    gmail_password: Optional[str] = None
+    use_email: Optional[bool] = None
+    use_calendar: Optional[bool] = None
+    use_sheets: Optional[bool] = None
+    google_credentials: Optional[dict] = None
+    dashboard_username: Optional[str] = None
+    dashboard_password: Optional[str] = None
+
+
 @router.get("/clients")
 def get_all_clients(db: Session = Depends(get_db)):
     clients = db.query(Client).all()
@@ -53,7 +77,6 @@ def get_all_clients(db: Session = Depends(get_db)):
 
 @router.post("/clients")
 def create_client(data: ClientCreate, db: Session = Depends(get_db)):
-    # Auto-generate system prompt using AI
     try:
         system_prompt = generate_system_prompt(data.dict())
     except Exception as e:
@@ -88,14 +111,32 @@ def get_client(client_id: str, db: Session = Depends(get_db)):
         "bot_name": client.bot_name,
         "bot_tone": client.bot_tone,
         "working_hours": client.working_hours,
+        "contact_phone": client.contact_phone,
         "system_prompt": client.system_prompt,
         "collect_fields": client.collect_fields,
         "use_calendar": client.use_calendar,
         "use_sheets": client.use_sheets,
         "use_email": client.use_email,
+        "gmail_sender": client.gmail_sender,
+        "gmail_password": "***" if client.gmail_password else None,
+        "wa_phone_id": client.wa_phone_id,
+        "wa_access_token": "***" if client.wa_access_token else None,
+        "groq_api_key": "***" if client.groq_api_key else None,
         "is_active": client.is_active,
         "created_at": str(client.created_at),
     }
+
+
+@router.put("/clients/{client_id}")
+def update_client(client_id: str, data: ClientUpdate, db: Session = Depends(get_db)):
+    client = db.query(Client).filter(Client.id == client_id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    for key, value in data.dict(exclude_none=True).items():
+        setattr(client, key, value)
+    db.commit()
+    db.refresh(client)
+    return {"message": "Client updated successfully"}
 
 
 @router.put("/clients/{client_id}/regenerate-prompt")

@@ -4,12 +4,15 @@ Handles conversations for any client based on their config.
 """
 
 import json
-import re
+import asyncio
 from datetime import datetime
+from loguru import logger
 from sqlalchemy.orm import Session
 from models.client import Client
 from models.conversation import Conversation, Lead
 from services.ai_service import get_ai_reply, extract_fields
+from services.email_service import send_confirmation_email
+from services.sheets_service import add_lead_to_sheets
 
 
 RESET_WORDS = {"reset", "restart", "start over", "hi", "hello", "hey",
@@ -92,19 +95,16 @@ async def _handle_stage(
             user_text,
             system_prompt,
             client.groq_api_key,
-            f"Patient/User just started. Greet them warmly as {client.bot_name} from {client.business_name}. Ask for their {fields[0] if fields else 'name'}."
+            f"User just started. Greet them warmly as {client.bot_name} from {client.business_name}. Ask for their {fields[0] if fields else 'name'} only."
         )
 
     # ── COLLECTING FIELDS ─────────────────────────────────────────
     if stage == "collecting":
-        # Find which fields are still missing
         missing_fields = [f for f in fields if not collected.get(f)]
 
         if missing_fields:
-            # Try to extract ALL missing fields from current message
             extracted = await extract_fields(user_text, missing_fields, client.groq_api_key)
 
-            # Save any extracted fields
             for field, value in extracted.items():
                 if value:
                     collected[field] = value
@@ -112,20 +112,17 @@ async def _handle_stage(
             conversation.collected = collected
             db.commit()
 
-            # Check again what's still missing
             still_missing = [f for f in fields if not collected.get(f)]
 
             if still_missing:
-                # Ask for next missing field
                 return await get_ai_reply(
                     conversation.history[:-1],
                     user_text,
                     system_prompt,
                     client.groq_api_key,
-                    f"Collected so far: {json.dumps(collected)}. Still need: {', '.join(still_missing)}. Naturally ask for the next missing field: {still_missing[0]}."
+                    f"Collected so far: {json.dumps(collected)}. Still need: {', '.join(still_missing)}. Ask for ONLY the next missing field: {still_missing[0]}. One question only."
                 )
             else:
-                # All fields collected — move to confirming
                 conversation.stage = "confirming"
                 db.commit()
                 return await get_ai_reply(
@@ -133,7 +130,7 @@ async def _handle_stage(
                     user_text,
                     system_prompt,
                     client.groq_api_key,
-                    f"All details collected: {json.dumps(collected)}. Show a summary and ask user to reply YES to confirm or NO to change."
+                    f"All details collected: {json.dumps(collected)}. Show a SHORT summary and ask user to reply YES to confirm or NO to change. Keep it brief."
                 )
 
     # ── CONFIRMING ────────────────────────────────────────────────
@@ -154,12 +151,50 @@ async def _handle_stage(
             conversation.stage = "completed"
             db.commit()
 
+            # Debug log
+            logger.info(f"📧 Checking email | use_email={client.use_email} | gmail={client.gmail_sender} | collected={conversation.collected}")
+
+            # Send email if enabled
+            if client.use_email and client.gmail_sender and client.gmail_password:
+                email = conversation.collected.get("email")
+                logger.info(f"📧 Email field found = {email}")
+                if email:
+                    asyncio.create_task(
+                        asyncio.to_thread(
+                            send_confirmation_email,
+                            email,
+                            client.business_name,
+                            client.bot_name,
+                            conversation.collected,
+                            client.gmail_sender,
+                            client.gmail_password,
+                        )
+                    )
+                    logger.info(f"📧 Email task created for {email}")
+                else:
+                    logger.warning("📧 No email field in collected data — skipping email")
+            else:
+                logger.warning(f"📧 Email not triggered — use_email={client.use_email} gmail={client.gmail_sender}")
+
+            # Add to sheets if enabled
+            if client.use_sheets and client.google_credentials:
+                asyncio.create_task(
+                    asyncio.to_thread(
+                        add_lead_to_sheets,
+                        client.business_name,
+                        phone,
+                        conversation.collected,
+                        client.google_credentials,
+                    )
+                )
+                logger.info("📊 Sheets task created")
+
             return await get_ai_reply(
                 conversation.history[:-1],
                 user_text,
                 system_prompt,
                 client.groq_api_key,
-                f"User confirmed! Details saved: {json.dumps(conversation.collected)}. Thank them warmly and let them know what happens next. Mention they can call {client.contact_phone} for any changes."
+                f"User confirmed! Details saved: {json.dumps(conversation.collected)}. Thank them warmly in 1-2 sentences and tell them what happens next. Mention they can call {client.contact_phone} for any changes."
             )
 
         if any(w in lower for w in no_words):
@@ -177,7 +212,7 @@ async def _handle_stage(
             user_text,
             system_prompt,
             client.groq_api_key,
-            f"User already submitted their details. Answer any questions about {client.business_name}. For changes tell them to call {client.contact_phone}."
+            f"User already submitted their details. Answer any questions about {client.business_name} briefly. For changes tell them to call {client.contact_phone}."
         )
 
     # Fallback

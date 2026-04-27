@@ -29,6 +29,9 @@ export default function ClientDetail() {
   const [loading, setLoading] = useState(true);
   const [regenerating, setRegenerating] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const webhookUrl = `${process.env.NEXT_PUBLIC_WEBHOOK_BASE_URL}/webhook/${id}`;
 
   useEffect(() => {
     axios.get(`${process.env.NEXT_PUBLIC_API_URL}/admin/clients/${id}`)
@@ -39,13 +42,19 @@ export default function ClientDetail() {
       .catch(() => setLoading(false));
   }, [id]);
 
+  const copyWebhook = () => {
+    navigator.clipboard.writeText(webhookUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   const regeneratePrompt = async () => {
     setRegenerating(true);
     try {
       const res = await axios.put(
         `${process.env.NEXT_PUBLIC_API_URL}/admin/clients/${id}/regenerate-prompt`
       );
-      setClient(prev => prev ? {...prev, system_prompt: res.data.system_prompt} : prev);
+      setClient(prev => prev ? { ...prev, system_prompt: res.data.system_prompt } : prev);
       alert("✅ System prompt regenerated!");
     } catch (err: any) {
       alert(`❌ Error: ${err.message}`);
@@ -83,39 +92,65 @@ export default function ClientDetail() {
       <div className="max-w-4xl mx-auto">
 
         {/* Header */}
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <Link href="/dashboard" className="text-gray-400 hover:text-white text-sm mb-2 block">
-              ← Back to Dashboard
-            </Link>
-            <h1 className="text-3xl font-bold">{client.business_name}</h1>
-            <p className="text-gray-400 mt-1">{client.business_type}</p>
-          </div>
-          <div className="flex gap-3">
-            <button
-              onClick={regeneratePrompt}
-              disabled={regenerating}
-              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition"
-            >
-              {regenerating ? "Regenerating..." : "🔄 Regenerate Prompt"}
-            </button>
-            <button
-              onClick={deleteClient}
-              disabled={deleting}
-              className="bg-red-600 hover:bg-red-700 disabled:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition"
-            >
-              {deleting ? "Deleting..." : "🗑️ Delete"}
-            </button>
-            <Link
-  href={`/client-dashboard/${id}`}
-  className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition"
->
-  📊 View Dashboard
-</Link>
-
+        <div className="mb-8">
+          <Link href="/dashboard" className="text-gray-400 hover:text-white text-sm mb-2 block">
+            ← Back to Dashboard
+          </Link>
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-3xl font-bold">{client.business_name}</h1>
+              <p className="text-gray-400 mt-1">{client.business_type}</p>
+            </div>
+            <div className="flex gap-3">
+              <Link
+                href={`/client-dashboard/${id}`}
+                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition"
+              >
+                📊 View Dashboard
+              </Link>
+              <button
+                onClick={regeneratePrompt}
+                disabled={regenerating}
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition"
+              >
+                {regenerating ? "Regenerating..." : "🔄 Regenerate Prompt"}
+              </button>
+              <button
+                onClick={deleteClient}
+                disabled={deleting}
+                className="bg-red-600 hover:bg-red-700 disabled:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition"
+              >
+                {deleting ? "Deleting..." : "🗑️ Delete"}
+              </button>
+            </div>
           </div>
         </div>
-        
+
+        {/* Webhook URL Box */}
+        <div className="bg-gray-900 rounded-xl p-5 border border-green-800 mb-6">
+          <p className="text-sm font-semibold text-green-400 mb-3">
+            🔗 WhatsApp Webhook URL — Paste this in Meta Developer Console
+          </p>
+          <div className="flex items-center gap-3 bg-gray-800 rounded-lg p-3">
+            <code className="text-green-300 text-sm flex-1 break-all">
+              {webhookUrl}
+            </code>
+            <button
+              onClick={copyWebhook}
+              className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition ${
+                copied
+                  ? "bg-green-600 text-white"
+                  : "bg-gray-700 hover:bg-gray-600 text-white"
+              }`}
+            >
+              {copied ? "✅ Copied!" : "📋 Copy"}
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            Use the <span className="text-gray-300">wa_verify_token</span> you set as the Verify Token in Meta
+          </p>
+        </div>
+
         <div className="grid grid-cols-2 gap-6">
 
           {/* Business Info */}
@@ -139,6 +174,16 @@ export default function ClientDetail() {
                 <p className="text-white">{client.contact_phone || "Not set"}</p>
               </div>
               <div>
+                <p className="text-xs text-gray-400">Status</p>
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                  client.is_active
+                    ? "bg-green-900 text-green-400"
+                    : "bg-red-900 text-red-400"
+                }`}>
+                  {client.is_active ? "Active" : "Inactive"}
+                </span>
+              </div>
+              <div>
                 <p className="text-xs text-gray-400">Created</p>
                 <p className="text-white">{new Date(client.created_at).toLocaleDateString()}</p>
               </div>
@@ -151,19 +196,25 @@ export default function ClientDetail() {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-gray-300">📧 Email</span>
-                <span className={`px-2 py-1 rounded-full text-xs ${client.use_email ? "bg-green-900 text-green-400" : "bg-gray-700 text-gray-400"}`}>
+                <span className={`px-2 py-1 rounded-full text-xs ${
+                  client.use_email ? "bg-green-900 text-green-400" : "bg-gray-700 text-gray-400"
+                }`}>
                   {client.use_email ? "Enabled" : "Disabled"}
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-gray-300">📅 Calendar</span>
-                <span className={`px-2 py-1 rounded-full text-xs ${client.use_calendar ? "bg-green-900 text-green-400" : "bg-gray-700 text-gray-400"}`}>
+                <span className={`px-2 py-1 rounded-full text-xs ${
+                  client.use_calendar ? "bg-green-900 text-green-400" : "bg-gray-700 text-gray-400"
+                }`}>
                   {client.use_calendar ? "Enabled" : "Disabled"}
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-gray-300">📊 Sheets</span>
-                <span className={`px-2 py-1 rounded-full text-xs ${client.use_sheets ? "bg-green-900 text-green-400" : "bg-gray-700 text-gray-400"}`}>
+                <span className={`px-2 py-1 rounded-full text-xs ${
+                  client.use_sheets ? "bg-green-900 text-green-400" : "bg-gray-700 text-gray-400"
+                }`}>
                   {client.use_sheets ? "Enabled" : "Disabled"}
                 </span>
               </div>
