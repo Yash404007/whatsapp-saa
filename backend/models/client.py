@@ -42,6 +42,10 @@ class Client(Base):
     gmail_sender     = Column(String, nullable=True)
     gmail_password   = Column(String, nullable=True)
 
+    #sheets
+    sheets_id = Column(String, nullable=True)
+    calendar_id = Column(String, nullable=True)
+
     # Groq API key
     groq_api_key     = Column(String, nullable=True)
 

@@ -57,6 +57,9 @@ class ClientUpdate(BaseModel):
     google_credentials: Optional[dict] = None
     dashboard_username: Optional[str] = None
     dashboard_password: Optional[str] = None
+    sheets_id: Optional[str] = None
+    calendar_id: Optional[str] = None
+   
 
 
 @router.get("/clients")
@@ -124,6 +127,8 @@ def get_client(client_id: str, db: Session = Depends(get_db)):
         "groq_api_key": "***" if client.groq_api_key else None,
         "is_active": client.is_active,
         "created_at": str(client.created_at),
+        "sheets_id": client.sheets_id,
+        "calendar_id": client.calendar_id,
     }
 
 
