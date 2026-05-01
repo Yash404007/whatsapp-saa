@@ -11,41 +11,39 @@ def generate_system_prompt(client_data: dict) -> str:
 
     client = Groq(api_key=groq_api_key)
 
-    prompt = f"""You are an expert at creating AI chatbot system prompts for WhatsApp bots.
+    prompt = f"""Create a WhatsApp sales bot system prompt for this business:
 
-A business wants to deploy a WhatsApp AI receptionist bot. Based on the details below, 
-create a detailed system prompt for their bot.
+Business: {client_data.get('business_name')}
+Type: {client_data.get('business_type')}
+Description: {client_data.get('description')}
+Bot Name: {client_data.get('bot_name', 'Alex')}
+Tone: {client_data.get('bot_tone', 'friendly')}
+Hours: {client_data.get('working_hours', '')}
+Phone: {client_data.get('contact_phone', '')}
+Fields to collect: {', '.join(client_data.get('collect_fields', []))}
 
-BUSINESS DETAILS:
-- Business Name: {client_data.get('business_name')}
-- Business Type: {client_data.get('business_type')}
-- Description: {client_data.get('description')}
-- Bot Name: {client_data.get('bot_name', 'Alex')}
-- Bot Tone: {client_data.get('bot_tone', 'friendly')}
-- Working Hours: {client_data.get('working_hours', 'Mon-Fri 9am-6pm')}
-- Contact Phone: {client_data.get('contact_phone', '')}
-- Contact Email: {client_data.get('contact_email', '')}
-- Address: {client_data.get('address', '')}
-- Fields to collect from users: {', '.join(client_data.get('collect_fields', []))}
+The bot must:
+1. Be a warm confident sales consultant
+2. Know the business services deeply
+3. Answer FAQs naturally
+4. Build trust through results and proof
+5. Guide users toward booking
 
-REQUIREMENTS for the system prompt:
-1. Define the bot's personality and name
-2. List what information to collect from users
-3. Define the conversation flow
-4. Include business info (hours, contact, address)
-5. Set strict rules (no medical/legal advice, stay on topic, etc)
-6. Keep replies SHORT and conversational for WhatsApp
-7. Handle both English and local language users
+WhatsApp formatting rules:
+- Use *text* for bold (NOT ** or * *)
+- Use emojis naturally
+- Keep replies under 5 lines
+- Never use bullet points with asterisks like * item
+- Use ✅ or • for lists
 
-Return ONLY the system prompt text, nothing else. No explanation, no preamble."""
+Return ONLY the system prompt."""
 
     result = client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=1000,
+        max_tokens=800,
         temperature=0.7,
     )
-
     return result.choices[0].message.content.strip()
 
 
@@ -60,10 +58,20 @@ async def get_ai_reply(
         client = AsyncGroq(api_key=groq_api_key)
 
         full_system = system_prompt
-        full_system += "\n\nSTRICT WHATSAPP RULES:\n- Maximum 2 sentences per reply\n- Never list multiple things at once\n- Ask ONE question at a time\n- No bullet points or numbered lists\n- Keep it conversational and short"
+        full_system += """
+
+STRICT WHATSAPP RULES — NEVER BREAK THESE:
+- Max 5 lines per reply
+- Bold = *word* NOT ** word ** or * word *
+- Lists use ✅ or • NOT asterisks
+- Max 2 emojis per message
+- ONE question per message only
+- Never sound robotic
+- Never use markdown headers like ##
+- Short punchy sentences"""
 
         if extra_context:
-            full_system += f"\n\nCONTEXT FOR THIS RESPONSE:\n{extra_context}"
+            full_system += f"\n\nCONTEXT:\n{extra_context}"
 
         messages = [{"role": "system", "content": full_system}]
         for h in history:
@@ -79,7 +87,7 @@ async def get_ai_reply(
         )
         return result.choices[0].message.content.strip()
     except Exception as e:
-        return "I'm having a technical issue. Please try again shortly."
+        return "Having a small issue. Please try again! 🙏"
 
 
 async def extract_fields(
@@ -93,27 +101,25 @@ async def extract_fields(
 
         client = AsyncGroq(api_key=groq_api_key)
 
-        prompt = f"""Extract the following fields from the user's message.
-Return ONLY valid JSON — no explanation, no markdown fences.
+        prompt = f"""Extract fields from message. Return ONLY valid JSON.
 
-Fields needed: {", ".join(fields)}
-Today's date: {today}
-User message: "{user_message}"
+Fields: {", ".join(fields)}
+Today: {today}
+Message: "{user_message}"
 
 Rules:
-- dates → YYYY-MM-DD format. For day names like "Monday" calculate next upcoming date from {today}
-- times → HH:MM 24-hour format. "3pm"="15:00", "11am"="11:00"
+- dates → YYYY-MM-DD
+- times → HH:MM 24hr
 - email → lowercase
-- name → title-cased
-- phone → digits only with country code
-- If a field is absent → null
+- name → Title Case
+- null if not found
 
-Output example: {{"name": "John Smith", "email": "j@g.com", "date": "2024-12-25", "time": "15:00"}}"""
+Example: {{"name": "John", "email": "j@g.com"}}"""
 
         result = await client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=200,
+            max_tokens=150,
             temperature=0,
         )
         raw = result.choices[0].message.content.strip()
@@ -122,5 +128,5 @@ Output example: {{"name": "John Smith", "email": "j@g.com", "date": "2024-12-25"
         if not match:
             raise ValueError("No JSON found")
         return json.loads(match.group())
-    except Exception as e:
+    except Exception:
         return {f: None for f in fields}

@@ -1,5 +1,6 @@
 """
-Multi-tenant bot engine — Premium AI-first conversational approach.
+Multi-tenant bot engine — Strict 2-phase approach with field validation.
+Supports any fields the client configures.
 """
 
 import json
@@ -9,7 +10,7 @@ from loguru import logger
 from sqlalchemy.orm import Session
 from models.client import Client
 from models.conversation import Conversation, Lead
-from services.ai_service import get_ai_reply, extract_fields
+from services.ai_service import get_ai_reply
 from services.email_service import send_confirmation_email
 from services.sheets_service import add_lead_to_sheets
 from services.calendar_service import create_calendar_event
@@ -18,13 +19,42 @@ from services.calendar_service import create_calendar_event
 RESET_WORDS = {"reset", "restart", "start over", "hi", "hello", "hey",
                "start", "new", "hii", "helo", "menu", "home"}
 
-# When user shows buying intent
 BOOKING_SIGNALS = {
-    "book", "schedule", "consultation", "call", "meeting", "appointment",
-    "interested", "proceed", "let's go", "ready", "connect", "yes",
-    "talk", "discuss", "help me", "i want", "i need", "get started",
-    "sign up", "onboard", "start", "begin", "hire", "work with"
+    "book", "schedule", "consultation", "call", "meeting",
+    "interested", "proceed", "let's go", "ready", "connect",
+    "talk", "discuss", "i want", "i need", "get started",
+    "sign up", "begin", "hire", "work with"
 }
+
+FIELD_QUESTIONS = {
+    "name": "What's your full name?",
+    "email": "What's your email address?",
+    "phone": "What's your phone number?",
+    "budget": "What's your budget range?",
+    "timeline": "What's your preferred timeline?",
+    "service_type": "What service are you looking for?",
+    "company": "What's your company name?",
+    "project_description": "Briefly describe your project?",
+    "location": "Where are you based?",
+    "reason": "What's the reason for your visit?",
+    "date": "What's your preferred date?",
+    "time": "What time works best?",
+    "main_challenge": "What's your biggest business challenge?",
+    "preferred_time": "When's a good time for a call?",
+    "business_type": "What type of business do you run?",
+}
+
+# Fields that need strict validation
+STRICT_FIELDS = {"email", "phone", "budget", "name"}
+
+# Fields that accept any answer
+LOOSE_FIELDS = {
+    "timeline", "service_type", "company", "project_description",
+    "location", "reason", "date", "time", "main_challenge",
+    "preferred_time", "business_type"
+}
+
+MAX_CHAT_TURNS = 4
 
 
 async def process_message(phone: str, user_text: str, client: Client, db: Session) -> str:
@@ -84,8 +114,9 @@ async def _handle_stage(
     collected = dict(conversation.collected or {})
     fields = list(client.collect_fields or [])
     system_prompt = client.system_prompt or ""
+    chat_turns = len([h for h in conversation.history if h.get("role") == "user"])
 
-    logger.info(f"🔍 Stage={stage} | collected={collected} | fields={fields}")
+    logger.info(f"🔍 Stage={stage} | turns={chat_turns} | collected={collected}")
 
     # ── GREETING ──────────────────────────────────────────────────
     if stage == "greeting":
@@ -96,133 +127,109 @@ async def _handle_stage(
             user_text,
             system_prompt,
             client.groq_api_key,
-            """Give a POWERFUL welcome message. Use this EXACT WhatsApp format:
+            f"""Send a short powerful welcome. EXACT format:
 
-*Welcome to [Business Name]* 🚀
+*Welcome to {client.business_name}!* 🚀
+[1 punchy line about impact]
 
-[1 line about what you do and your impact]
+*We help with:*
+✅ [4-5 services]
 
-*We Help Businesses With:*
-✅ [Service 1]
-✅ [Service 2]  
-✅ [Service 3]
-✅ [Service 4]
-✅ [Service 5]
+What can we help you with today? 👇
 
-[1 motivational line about results]
-
-*How can we help YOU grow today?* 👇
-
-Make it feel premium, exciting and trustworthy. Use their actual services."""
+Max 8 lines. Use ✅ for lists. No asterisk bullets."""
         )
 
     # ── FREE CHATTING ─────────────────────────────────────────────
     if stage == "chatting":
-        # Try to extract fields naturally from conversation
-        if fields:
-            missing = [f for f in fields if not collected.get(f)]
-            if missing:
-                extracted = await extract_fields(user_text, missing, client.groq_api_key)
-                for field, value in extracted.items():
-                    if value:
-                        collected[field] = value
-                conversation.collected = collected
-                db.commit()
-
-        all_collected = all(collected.get(f) for f in fields)
         has_booking_intent = any(w in lower for w in BOOKING_SIGNALS)
+        should_push = chat_turns >= MAX_CHAT_TURNS
 
-        logger.info(f"🔍 booking_intent={has_booking_intent} | all_collected={all_collected} | collected={collected}")
+        logger.info(f"🔍 intent={has_booking_intent} | push={should_push} | turns={chat_turns}")
 
-        # All fields collected naturally
-        if all_collected and fields:
-            conversation.stage = "confirming"
-            db.commit()
-            return await _show_summary(collected, client, conversation.history[:-1], user_text, system_prompt)
-
-        # User shows booking intent — start collecting remaining fields
-        if has_booking_intent and fields:
+        if (should_push or has_booking_intent) and fields:
             missing = [f for f in fields if not collected.get(f)]
             if missing:
                 conversation.stage = "collecting"
                 db.commit()
-                return await get_ai_reply(
+                first_field = missing[0]
+                question = FIELD_QUESTIONS.get(
+                    first_field,
+                    f"Can you share your {first_field.replace('_', ' ')}?"
+                )
+                transition = await get_ai_reply(
                     conversation.history[:-1],
                     user_text,
                     system_prompt,
                     client.groq_api_key,
-                    f"""User wants to proceed. Transition smoothly to collecting their details.
-Already collected: {json.dumps(collected)}
-Next field needed: {missing[0]}
-
-Say something like "Awesome! Let's get you started 🎯" then ask ONLY for their {missing[0]} in a warm engaging way. Make it feel natural not like a form."""
+                    "Write ONE warm sentence saying you'd love to connect them with the team. No question. Max 1 line."
                 )
+                return f"{transition}\n\n*{question}* 😊"
 
-        # Keep the conversation going with AI
         return await get_ai_reply(
             conversation.history[:-1],
             user_text,
             system_prompt,
             client.groq_api_key,
-            f"""Continue the sales conversation naturally.
-Already collected: {json.dumps(collected)}
-
-Guidelines:
-- Answer their question with expertise and confidence
-- If they mention a problem, show empathy then present the solution
-- Use WhatsApp formatting: *bold* for emphasis, emojis for engagement
-- Share a relevant result or case study if possible
-- Naturally guide toward booking a free consultation
-- If they ask about pricing, give a range and explain value
-- Keep replies focused and max 5-6 lines
-- End with an engaging question to keep conversation going"""
+            """Answer confidently and warmly.
+STRICT RULES:
+- Max 4 lines
+- Use *bold* for key points
+- Use ✅ for lists max 3 items
+- End with ONE short question
+- No payment or bank details ever
+- No asterisk bullet points"""
         )
 
     # ── COLLECTING FIELDS ─────────────────────────────────────────
     if stage == "collecting":
         missing_fields = [f for f in fields if not collected.get(f)]
-        logger.info(f"🔍 missing_fields={missing_fields}")
 
         if not missing_fields:
             conversation.stage = "confirming"
             db.commit()
-            return await _show_summary(collected, client, conversation.history[:-1], user_text, system_prompt)
+            return _build_summary(collected)
 
-        # Save current input to next missing field
         current_field = missing_fields[0]
-        collected[current_field] = user_text.strip()
+        answer = user_text.strip()
+
+        # Validate answer
+        is_valid = _validate_field(current_field, answer)
+
+        if not is_valid:
+            question = FIELD_QUESTIONS.get(
+                current_field,
+                f"Can you share your {current_field.replace('_', ' ')}?"
+            )
+            logger.warning(f"⚠️ Invalid answer for {current_field}: {answer}")
+            return f"Hmm, that doesn't look right 😊\n\n*{question}*"
+
+        collected[current_field] = answer
         conversation.collected = collected
         db.commit()
 
-        logger.info(f"✅ Saved {current_field} = {user_text.strip()}")
+        logger.info(f"✅ Saved {current_field} = {answer}")
 
         still_missing = [f for f in fields if not collected.get(f)]
 
         if not still_missing:
             conversation.stage = "confirming"
             db.commit()
-            return await _show_summary(collected, client, conversation.history[:-1], user_text, system_prompt)
+            return _build_summary(collected)
 
-        # Ask for next field naturally using AI
         next_field = still_missing[0]
-        return await get_ai_reply(
-            conversation.history[:-1],
-            user_text,
-            system_prompt,
-            client.groq_api_key,
-            f"""Acknowledge what they just said warmly, then ask ONLY for their *{next_field}*.
-Already collected: {json.dumps(collected)}
-Be natural, warm and brief. One question only. Use an emoji. Max 2 lines."""
+        question = FIELD_QUESTIONS.get(
+            next_field,
+            f"Can you share your {next_field.replace('_', ' ')}?"
         )
+        return f"Got it! ✅\n\n*{question}* 😊"
 
     # ── CONFIRMING ────────────────────────────────────────────────
     if stage == "confirming":
         yes_words = {"yes", "confirm", "ok", "okay", "haan", "ha", "correct",
-                     "right", "sure", "proceed", "yess", "yep", "yeah", "perfect",
-                     "great", "looks good", "confirmed", "go ahead"}
-        no_words  = {"no", "nahi", "change", "wrong", "edit", "modify", "update"}
-
-        logger.info(f"🔍 Confirming | lower={lower}")
+                     "right", "sure", "proceed", "yess", "yep", "yeah",
+                     "perfect", "great", "looks good", "confirmed", "go ahead"}
+        no_words = {"no", "nahi", "change", "wrong", "edit", "modify", "update"}
 
         if any(w in lower for w in yes_words):
             logger.info(f"✅ Confirmed! collected={conversation.collected}")
@@ -255,7 +262,7 @@ Be natural, warm and brief. One question only. Use an emoji. Max 2 lines."""
                     )
                     logger.info(f"📧 Email task created for {email}")
 
-            # Add to sheets
+            # Add to sheets with history
             if client.use_sheets and client.google_credentials and client.sheets_id:
                 asyncio.create_task(
                     asyncio.to_thread(
@@ -265,6 +272,7 @@ Be natural, warm and brief. One question only. Use an emoji. Max 2 lines."""
                         conversation.collected,
                         client.google_credentials,
                         client.sheets_id,
+                        conversation.history,
                     )
                 )
                 logger.info("📊 Sheets task created")
@@ -283,51 +291,31 @@ Be natural, warm and brief. One question only. Use an emoji. Max 2 lines."""
                 )
                 logger.info("📅 Calendar task created")
 
-            # Beautiful confirmation message
-            return await get_ai_reply(
-                conversation.history[:-1],
-                user_text,
-                system_prompt,
-                client.groq_api_key,
-                f"""User confirmed! Details saved: {json.dumps(conversation.collected)}
-
-Send a POWERFUL confirmation message in this format:
-
-*🎉 You're All Set!*
-
-[Warm congratulations line]
-
-*What Happens Next:*
-📞 Our team will contact you within [timeframe]
-📧 Check your email for confirmation
-🚀 [What they can expect]
-
-*Your Details:*
-[Show key details cleanly]
-
-[Motivational closing line about their business growth]
-
-📞 Urgent? Call: {client.contact_phone}
-
-Make it exciting and make them feel they made the right decision!"""
+            name = conversation.collected.get("name", "there")
+            email = conversation.collected.get("email", "")
+            return (
+                f"*🎉 You're all set, {name}!*\n\n"
+                f"Our team at *{client.business_name}* will reach out shortly.\n\n"
+                f"{'📧 Confirmation sent to ' + email + chr(10) if email else ''}"
+                f"📞 Urgent? Call {client.contact_phone or 'us'}\n\n"
+                f"_Thank you for choosing {client.business_name}. "
+                f"Looking forward to growing your business!_ 🚀"
             )
 
         if any(w in lower for w in no_words):
-            conversation.stage = "chatting"
+            conversation.stage = "collecting"
             conversation.collected = {}
             db.commit()
-            return await get_ai_reply(
-                conversation.history[:-1],
-                user_text,
-                system_prompt,
-                client.groq_api_key,
-                "User wants to change details. Acknowledge warmly and ask what they'd like to update. Be friendly."
-            )
+            if fields:
+                first_field = fields[0]
+                question = FIELD_QUESTIONS.get(
+                    first_field,
+                    f"Can you share your {first_field.replace('_', ' ')}?"
+                )
+                return f"No problem! Let's start fresh.\n\n*{question}* 😊"
+            return "No problem! How can we help? 😊"
 
-        return (
-            "Please reply *YES* to confirm or *NO* to make changes 😊\n\n"
-            "We're excited to work with you! 🚀"
-        )
+        return "Please reply *YES* to confirm ✅ or *NO* to make changes 😊"
 
     # ── COMPLETED ─────────────────────────────────────────────────
     if stage == "completed":
@@ -336,40 +324,83 @@ Make it exciting and make them feel they made the right decision!"""
             user_text,
             system_prompt,
             client.groq_api_key,
-            f"""User already booked. Answer their questions about {client.business_name} as a trusted advisor.
-Be helpful, warm and professional.
-For urgent matters tell them to call {client.contact_phone}.
-Use WhatsApp formatting for readability."""
+            f"""User already booked. Answer helpfully.
+Do NOT restart conversation.
+Do NOT ask for details again.
+For urgent: {client.contact_phone}
+Max 3 lines."""
         )
 
     # Fallback
     conversation.stage = "greeting"
     db.commit()
-    return f"*Welcome to {client.business_name}!* 👋\n\nI'm {client.bot_name}. How can I help you today? 😊"
+    return f"*Welcome to {client.business_name}!* 👋\n\nI'm {client.bot_name}. How can I help? 😊"
 
 
-async def _show_summary(collected: dict, client: Client, history: list, user_text: str, system_prompt: str) -> str:
-    """Show a beautiful summary before confirmation."""
-    return await get_ai_reply(
-        history,
-        user_text,
-        system_prompt,
-        client.groq_api_key,
-        f"""Show a beautiful confirmation summary in WhatsApp format:
-
-*📋 Here's Your Summary*
-
-[For each field show as:]
-*Field Name:* Value
-
-[Then add:]
-
-✅ Everything look good?
-
-Reply *YES* to confirm your booking
-Reply *NO* to make any changes
-
-[Add 1 exciting line about what they're about to achieve]
-
-Details to show: {json.dumps(collected)}"""
+def _build_summary(collected: dict) -> str:
+    """Build clean hardcoded summary."""
+    lines = []
+    for key, value in collected.items():
+        label = key.replace("_", " ").title()
+        lines.append(f"*{label}:* {value}")
+    summary = "\n".join(lines)
+    return (
+        f"*📋 Almost done! Here's your summary:*\n\n"
+        f"{summary}\n\n"
+        f"─────────────────\n"
+        f"Reply *YES* to confirm ✅\n"
+        f"Reply *NO* to make changes"
     )
+
+
+def _validate_field(field: str, value: str) -> bool:
+    """
+    Flexible validation:
+    - Strict fields: email, phone, budget, name
+    - All other fields: accept any reasonable answer
+    """
+    if not value or len(value.strip()) < 1:
+        return False
+
+    value_lower = value.lower().strip()
+
+    # ── EMAIL ──────────────────────────────────────────────────
+    if field == "email":
+        return "@" in value and "." in value.split("@")[-1]
+
+    # ── PHONE ──────────────────────────────────────────────────
+    if field == "phone":
+        digits = "".join(filter(str.isdigit, value))
+        return len(digits) >= 7
+
+    # ── BUDGET ─────────────────────────────────────────────────
+    if field == "budget":
+        has_number = any(c.isdigit() for c in value)
+        has_currency = any(w in value_lower for w in [
+            "k", "l", "lakh", "lac", "thousand", "usd", "inr",
+            "₹", "$", "cr", "crore", "million", "free", "discuss",
+            "negotiable", "flexible"
+        ])
+        return has_number or has_currency
+
+    # ── NAME ───────────────────────────────────────────────────
+    if field == "name":
+        # Reject obvious non-names
+        non_name_phrases = [
+            "discuss", "meeting", "call", "schedule", "book",
+            "yes", "no", "ok", "okay", "sure", "website", "service",
+            "help", "need", "want", "hi", "hello", "hey", "let's",
+            "lets", "can we", "i want", "i need", "what", "how",
+            "when", "where", "why", "which"
+        ]
+        # Name should not be a single common word that is not a name
+        if value_lower in non_name_phrases:
+            return False
+        # Name should be at least 2 chars and contain letters
+        has_letters = any(c.isalpha() for c in value)
+        return has_letters and len(value.strip()) >= 2
+
+    # ── ALL OTHER FIELDS — Accept any reasonable answer ─────────
+    # Just reject empty or very short single-character answers
+    has_content = len(value.strip()) >= 2
+    return has_content
