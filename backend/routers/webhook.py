@@ -55,7 +55,7 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
     if not phone or not text or not phone_number_id:
         return {"status": "ok"}
 
-    logger.info(f"📩 INCOMING {phone} → {text}")
+    logger.info(f"📩 INCOMING {phone} → {text} | phone_number_id={phone_number_id}")
 
     client = db.query(Client).filter(
         Client.wa_phone_id == phone_number_id,
@@ -66,6 +66,7 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
         logger.warning(f"⚠️ No client found for phone_number_id: {phone_number_id}")
         return {"status": "ok"}
 
+    logger.info(f"✅ Matched client: {client.business_name} (id={client.id}, wa_phone_id={client.wa_phone_id})")
     reply = await process_message(phone, text, client, db)
     logger.info(f"📤 OUTGOING {phone} ← {reply[:60]}...")
     await send_message(phone, reply, client.wa_access_token, client.wa_phone_id)

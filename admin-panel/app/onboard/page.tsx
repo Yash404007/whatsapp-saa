@@ -18,6 +18,7 @@ export default function OnboardClient() {
     contact_email: "",
     address: "",
     collect_fields: [] as string[],
+    services: [] as { name: string; description: string }[],
     wa_phone_id: "",
     wa_access_token: "",
     wa_verify_token: "",
@@ -26,10 +27,24 @@ export default function OnboardClient() {
     use_email: false,
     gmail_sender: "",
     gmail_password: "",
+    google_account_email: "",
     groq_api_key: "",
     dashboard_username: "",
     dashboard_password: "",
   });
+
+  const addService = () =>
+    setForm(prev => ({ ...prev, services: [...prev.services, { name: "", description: "" }] }));
+
+  const removeService = (i: number) =>
+    setForm(prev => ({ ...prev, services: prev.services.filter((_, idx) => idx !== i) }));
+
+  const updateService = (i: number, field: "name" | "description", value: string) =>
+    setForm(prev => {
+      const updated = [...prev.services];
+      updated[i] = { ...updated[i], [field]: value };
+      return { ...prev, services: updated };
+    });
 
   const fieldOptions = [
     "name", "email", "phone", "company", "reason",
@@ -181,6 +196,49 @@ export default function OnboardClient() {
             </div>
 
             <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm text-gray-400">Services You Offer</label>
+                <button
+                  type="button"
+                  onClick={addService}
+                  className="text-xs bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded-full transition"
+                >
+                  + Add Service
+                </button>
+              </div>
+              {form.services.length === 0 && (
+                <p className="text-xs text-gray-500 italic">No services added — bot will skip service selection and go straight to lead collection.</p>
+              )}
+              <div className="space-y-3">
+                {form.services.map((svc, i) => (
+                  <div key={i} className="flex gap-2 items-start">
+                    <div className="flex-1 space-y-2">
+                      <input
+                        className="w-full bg-gray-800 rounded-lg p-2 text-white border border-gray-700 focus:border-green-500 outline-none text-sm"
+                        placeholder={`Service name (e.g. AR/VR Marketing)`}
+                        value={svc.name}
+                        onChange={e => updateService(i, "name", e.target.value)}
+                      />
+                      <input
+                        className="w-full bg-gray-800 rounded-lg p-2 text-white border border-gray-700 focus:border-green-500 outline-none text-sm"
+                        placeholder={`Short description (e.g. Immersive 3D experiences)`}
+                        value={svc.description}
+                        onChange={e => updateService(i, "description", e.target.value)}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeService(i)}
+                      className="text-red-400 hover:text-red-300 text-lg mt-1 px-1"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
               <label className="text-sm text-gray-400 block mb-2">Fields to Collect from Users</label>
               <div className="flex flex-wrap gap-2">
                 {fieldOptions.map(field => (
@@ -254,6 +312,19 @@ export default function OnboardClient() {
               />
             </div>
 
+            {/* Google Account per bot */}
+            <div className="border border-green-800/50 bg-green-950/20 rounded-lg p-4 space-y-3">
+              <p className="text-sm font-semibold text-green-400">📊 Google Sheets & Calendar</p>
+              <p className="text-xs text-gray-400">Each bot gets its own Sheet and Calendar. Enter the Gmail that should have access to this bot's data.</p>
+              <input
+                className="w-full bg-gray-800 rounded-lg p-3 text-white border border-gray-700 focus:border-green-500 outline-none"
+                placeholder="client@gmail.com (Sheet + Calendar will be shared here)"
+                value={form.google_account_email}
+                onChange={e => setForm({...form, google_account_email: e.target.value})}
+              />
+              <p className="text-xs text-gray-500">Leave blank to use the platform master account only.</p>
+            </div>
+
             <div className="border border-gray-700 rounded-lg p-4 space-y-3">
               <p className="text-sm font-medium text-gray-300">Optional Integrations</p>
 
@@ -264,14 +335,15 @@ export default function OnboardClient() {
                   onChange={e => setForm({...form, use_email: e.target.checked})}
                   className="w-4 h-4 accent-green-500"
                 />
-                <span className="text-sm text-gray-300">📧 Email Confirmation (Gmail SMTP)</span>
+                <span className="text-sm text-gray-300">📧 Email Confirmation to Leads (Gmail SMTP)</span>
               </label>
 
               {form.use_email && (
                 <div className="space-y-3 pl-7">
+                  <p className="text-xs text-gray-500">Sends a confirmation email to leads after they complete the bot flow.</p>
                   <input
                     className="w-full bg-gray-800 rounded-lg p-3 text-white border border-gray-700 focus:border-green-500 outline-none"
-                    placeholder="Gmail address"
+                    placeholder="Gmail address to send FROM"
                     value={form.gmail_sender}
                     onChange={e => setForm({...form, gmail_sender: e.target.value})}
                   />
@@ -284,26 +356,6 @@ export default function OnboardClient() {
                   />
                 </div>
               )}
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.use_calendar}
-                  onChange={e => setForm({...form, use_calendar: e.target.checked})}
-                  className="w-4 h-4 accent-green-500"
-                />
-                <span className="text-sm text-gray-300">📅 Google Calendar</span>
-              </label>
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.use_sheets}
-                  onChange={e => setForm({...form, use_sheets: e.target.checked})}
-                  className="w-4 h-4 accent-green-500"
-                />
-                <span className="text-sm text-gray-300">📊 Google Sheets</span>
-              </label>
             </div>
 
             <div className="flex gap-3 mt-4">

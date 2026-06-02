@@ -25,6 +25,9 @@ class Client(Base):
     # Fields to collect from users
     collect_fields   = Column(JSON, default=list)
 
+    # Custom services list: [{"name": "...", "description": "..."}]
+    services         = Column(JSON, nullable=True)
+
     # WhatsApp credentials
     wa_phone_id      = Column(String, nullable=True)
     wa_access_token  = Column(String, nullable=True)
@@ -38,9 +41,12 @@ class Client(Base):
     # Google credentials (stored as JSON)
     google_credentials = Column(JSON, nullable=True)
 
-    # Gmail SMTP
+    # Gmail SMTP (for sending confirmation emails to leads)
     gmail_sender     = Column(String, nullable=True)
     gmail_password   = Column(String, nullable=True)
+
+    # Google account email — Sheet + Calendar are shared to this Gmail per bot
+    google_account_email = Column(String, nullable=True)
 
     #sheets
     sheets_id = Column(String, nullable=True)

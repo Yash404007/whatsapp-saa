@@ -1,32 +1,36 @@
+import json, os
 from dotenv import load_dotenv
+from googleapiclient.discovery import build
+from google.oauth2 import service_account
+
 load_dotenv()
 
-from database import SessionLocal
-from models.client import Client
+sa_raw = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+sa_json = json.loads(sa_raw)
 
-db = SessionLocal()
-client = db.query(Client).first()
+print(f"Service account email: {sa_json.get('client_email')}")
+print(f"Project ID: {sa_json.get('project_id')}")
 
-print(f"Business: {client.business_name}")
-print(f"use_sheets: {client.use_sheets}")
-print(f"sheets_id: {client.sheets_id}")
-print(f"google_credentials: {'✅ Set' if client.google_credentials else '❌ Not set'}")
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+creds = service_account.Credentials.from_service_account_info(sa_json, scopes=SCOPES)
 
-if client.google_credentials and client.sheets_id:
-    from services.sheets_service import add_lead_to_sheets
-    add_lead_to_sheets(
-        business_name=client.business_name,
-        phone="919321898637",
-        collected_data={
-            "email": "test@gmail.com",
-            "service_type": "Website Design",
-            "budget": "10k-15k",
-            "timeline": "1 month"
-        },
-        google_credentials=client.google_credentials,
-        sheet_id=client.sheets_id,
-    )
-    print("✅ Sheets test done — check your Google Sheet!")
-else:
-    print("❌ Missing sheets_id or google_credentials")
-    print("Go to /docs and update client with sheets_id")
+drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+
+print("\n--- Files in service account Drive ---")
+try:
+    files = drive.files().list(fields="files(id, name, mimeType, size)").execute().get("files", [])
+    if not files:
+        print("No files found")
+    for f in files:
+        print(f"  {f['name']} | {f['id']} | {f.get('size', 'N/A')} bytes")
+except Exception as e:
+    print(f"FAILED: {e}")
+
+print("\n--- About (storage quota) ---")
+try:
+    about = drive.about().get(fields="storageQuota").execute()
+    q = about.get("storageQuota", {})
+    print(f"  Usage: {q.get('usage', '?')} bytes")
+    print(f"  Limit: {q.get('limit', 'unlimited')}")
+except Exception as e:
+    print(f"FAILED: {e}")
