@@ -56,8 +56,11 @@ _RELATIVE = {
 
 
 def _get_credentials(google_credentials: dict):
+    creds_dict = dict(google_credentials)
+    if "private_key" in creds_dict:
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
     return service_account.Credentials.from_service_account_info(
-        google_credentials, scopes=SCOPES
+        creds_dict, scopes=SCOPES
     )
 
 
